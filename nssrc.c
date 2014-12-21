@@ -10,15 +10,15 @@
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <ares.h>
-
-#include "resolver.h"
-#include "debug.h"
 
 #define ALIGN(a) (((a+sizeof(void*)-1)/sizeof(void*))*sizeof(void*))
 
-static void pack_hostent(struct hostent *result, char *buffer, size_t buflen,
-    const char *name, const void *addr) {
+/**
+ * Packs the data from a name/value string into a hostent return
+ * struct. "result" must be previously initialized.
+ */
+static void pack_hostent(/* OUT */ struct hostent *result, char *buffer,
+		size_t buflen, const char *name, const void *addr) {
   char *aliases, *r_addr, *addrlist;
   size_t l, idx;
 
@@ -28,7 +28,7 @@ static void pack_hostent(struct hostent *result, char *buffer, size_t buflen,
    * 1st, the hostname */
   l = strlen(name);
   result->h_name = buffer;
-  memcpy (result->h_name, name, l);
+  memcpy(result->h_name, name, l);
   buffer[l] = '\0';
 
   idx = ALIGN (l+1);
@@ -46,7 +46,7 @@ static void pack_hostent(struct hostent *result, char *buffer, size_t buflen,
   /* 3rd, address */
   r_addr = buffer + idx;
   memcpy(r_addr, addr, result->h_length);
-  idx += ALIGN (result->h_length);
+  idx += ALIGN(result->h_length);
 
   /* 4th, the addresses ptr array */
   addrlist = buffer + idx;
@@ -56,18 +56,29 @@ static void pack_hostent(struct hostent *result, char *buffer, size_t buflen,
   result->h_addr_list = (char **) addrlist;
 }
 
-enum nss_status _nss_resolver_gethostbyname2_r (const char *name, int af,
-    struct hostent *result, char *buffer, size_t buflen, int *errnop,
-    int *h_errnop) {
+
+/**
+ * Resolves the hostname into an IP address. Not really re-entrant. This
+ * function will be called multiple times by the GNU C library to get the
+ * entire list of addresses.
+ * This function spec is defined at http://www.gnu.org/software/libc/manual/html_node/NSS-Module-Function-Internals.html
+ */
+enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
+    /* OUT */ struct hostent *result, char *buffer, size_t buflen,
+		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
+
+	/* Only IPv4 addresses make sense for this resolver. */
   if (af != AF_INET) {
     *errnop = EAFNOSUPPORT;
     *h_errnop = NO_DATA;
     return NSS_STATUS_UNAVAIL;
   }
 
-  debug("Query libnss-resolver: %s - %s", NSSRS_DEFAULT_FOLDER, (char *)name);
+  debug("Query libnss-etcd: %s - %s", NSSRS_DEFAULT_FOLDER, (char *)name);
+	// TODO(kenno): write nssrs_resolve equivalent function.
   struct hostent *hosts = nssrs_resolve(NSSRS_DEFAULT_FOLDER, (char *)name);
 
+	/* Host was not found in etcd. */
   if (!hosts || hosts->h_name == NULL) {
     *errnop = ENOENT;
     *h_errnop = HOST_NOT_FOUND;
@@ -75,21 +86,29 @@ enum nss_status _nss_resolver_gethostbyname2_r (const char *name, int af,
   }
 
   pack_hostent(result, buffer, buflen, name, hosts->h_addr_list[0]);
-  ares_free_hostent(hosts);
 
   return NSS_STATUS_SUCCESS;
 }
 
-enum nss_status _nss_resolver_gethostbyname_r (const char *name,
-    struct hostent *result, char *buffer, size_t buflen, int *errnop,
-    int *h_errnop) {
+
+/**
+ * Resolves a given hostname. This function just piggybacks off the
+ * re-entrant version.
+ */
+enum nss_status _nss_etcd_gethostbyname_r (const char *name,
+		/* OUT */ struct hostent *result, char *buffer, size_t buflen,
+		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
   return _nss_resolver_gethostbyname2_r(name, AF_INET, result, buffer, buflen,
     errnop, h_errnop);
 }
 
-enum nss_status _nss_resolver_gethostbyaddr_r (const void *addr, socklen_t len,
-    int af, struct hostent *result, char *buffer, size_t buflen, int *errnop,
-    int *h_errnop) {
+
+/**
+ * Handles the reverse name lookup. Not currently supported.
+ */
+enum nss_status _nss_etcd_gethostbyaddr_r (const void *addr, socklen_t len,
+		int af, /* OUT */ struct hostent *result, char *buffer, size_t buflen,
+		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
   if (af != AF_INET) {
     *errnop = EAFNOSUPPORT;
     *h_errnop = NO_DATA;
