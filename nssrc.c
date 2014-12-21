@@ -19,7 +19,7 @@
  * struct. "result" must be previously initialized.
  */
 static void pack_hostent(/* OUT */ struct hostent *result, char *buffer,
-		size_t buflen, const char *name, const void *addr) {
+    size_t buflen, const char *name, const void *addr) {
   char *aliases, *r_addr, *addrlist;
   size_t l, idx;
 
@@ -46,7 +46,7 @@ static void pack_hostent(/* OUT */ struct hostent *result, char *buffer,
 
   /* 3rd, address */
   r_addr = buffer + idx;
-	inet_pton(AF_INET, addr, r_addr);
+  inet_pton(AF_INET, addr, r_addr);
   idx += ALIGN(result->h_length);
 
   /* 4th, the addresses ptr array */
@@ -66,76 +66,76 @@ static void pack_hostent(/* OUT */ struct hostent *result, char *buffer,
  */
 enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
     /* OUT */ struct hostent *result, char *buffer, size_t buflen,
-		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
+    /* OUT */ int *errnop, /* OUT */ int *h_errnop) {
 
-	int pid, pipes[2], rv;  /* For hardcore forking action later. */
-	char addr[256];
-	int last_err;  /* Just in case we need to perror(3). */
-	char **args;
+  int pid, pipes[2], rv;  /* For hardcore forking action later. */
+  char addr[256];
+  int last_err;  /* Just in case we need to perror(3). */
+  char **args;
 
-	/* Only IPv4 addresses make sense for this resolver. */
+  /* Only IPv4 addresses make sense for this resolver. */
   if (af != AF_INET) {
     *errnop = EAFNOSUPPORT;
     *h_errnop = NO_DATA;
     return NSS_STATUS_UNAVAIL;
   }
 
-	pipe(pipes);
-	if (0 == (pid = fork())) {
-		args = (char **) calloc(sizeof(char *), 4);
-		if (args < 0) goto CHILD_ERR;  /** Dijkstra can suck it. */
+  pipe(pipes);
+  if (0 == (pid = fork())) {
+    args = (char **) calloc(sizeof(char *), 4);
+    if (args < 0) goto CHILD_ERR;  /** Dijkstra can suck it. */
 
-		args[0] = (char *) calloc(sizeof(char), 8);
-		strcpy(args[0], "etcdctl");
-		args[1] = (char *) calloc(sizeof(char), 4);
-		strcpy(args[1], "get");
-		args[2] = (char *) calloc(sizeof(char), strlen(name) + 7);
-		strcpy(args[2], "/hosts/");
-		strcpy(args[2] + 7, name);
-		args[3] = NULL;
+    args[0] = (char *) calloc(sizeof(char), 8);
+    strcpy(args[0], "etcdctl");
+    args[1] = (char *) calloc(sizeof(char), 4);
+    strcpy(args[1], "get");
+    args[2] = (char *) calloc(sizeof(char), strlen(name) + 7);
+    strcpy(args[2], "/hosts/");
+    strcpy(args[2] + 7, name);
+    args[3] = NULL;
 
-		/* Child code */
-		close(pipes[0]);
-		close(0);
-		close(2);
-		dup2(pipes[1], 1);
-		execvp("etcdctl", args);
+    /* Child code */
+    close(pipes[0]);
+    close(0);
+    close(2);
+    dup2(pipes[1], 1);
+    execvp("etcdctl", args);
 
-		CHILD_ERR:
-			last_err = errno;
-			perror("etcdctl");
-			exit(last_err);  /* Couldn't exec. */
-	} else if (pid > 0) {
-		/* Parent code */
-		close(pipes[1]);
+    CHILD_ERR:
+      last_err = errno;
+      perror("etcdctl");
+      exit(last_err);  /* Couldn't exec. */
+  } else if (pid > 0) {
+    /* Parent code */
+    close(pipes[1]);
 
-		if (0 > read(pipes[0], addr, 255)) {
-			last_err = errno;
-			perror("read");
-			*errnop = last_err;
-			*h_errnop = NO_DATA;
-			return NSS_STATUS_NOTFOUND;
-		} else {
-			int len = strlen(addr);
-			addr[len - 1] = '\0';
-		}
+    if (0 > read(pipes[0], addr, 255)) {
+      last_err = errno;
+      perror("read");
+      *errnop = last_err;
+      *h_errnop = NO_DATA;
+      return NSS_STATUS_NOTFOUND;
+    } else {
+      int len = strlen(addr);
+      addr[len - 1] = '\0';
+    }
 
-		waitpid(pid, &rv, 0);
+    waitpid(pid, &rv, 0);
 
-		if (rv) {
-			/* Host wasn't found or etcdctl failed spectacularly. */
-			*errnop = ENOENT;
-			*h_errnop = HOST_NOT_FOUND;
-			return NSS_STATUS_NOTFOUND;
-		}
-	} else {
-		/* Error forking. */
-		last_err = errno;
-		perror("fork");
-		*errnop = last_err;
-		*h_errnop = NO_DATA;
-		return NSS_STATUS_UNAVAIL;
-	}
+    if (rv) {
+      /* Host wasn't found or etcdctl failed spectacularly. */
+      *errnop = ENOENT;
+      *h_errnop = HOST_NOT_FOUND;
+      return NSS_STATUS_NOTFOUND;
+    }
+  } else {
+    /* Error forking. */
+    last_err = errno;
+    perror("fork");
+    *errnop = last_err;
+    *h_errnop = NO_DATA;
+    return NSS_STATUS_UNAVAIL;
+  }
 
   pack_hostent(result, buffer, buflen, name, addr);
 
@@ -148,8 +148,8 @@ enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
  * re-entrant version.
  */
 enum nss_status _nss_etcd_gethostbyname_r (const char *name,
-		/* OUT */ struct hostent *result, char *buffer, size_t buflen,
-		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
+    /* OUT */ struct hostent *result, char *buffer, size_t buflen,
+    /* OUT */ int *errnop, /* OUT */ int *h_errnop) {
   return _nss_etcd_gethostbyname2_r(name, AF_INET, result, buffer, buflen,
     errnop, h_errnop);
 }
@@ -159,8 +159,8 @@ enum nss_status _nss_etcd_gethostbyname_r (const char *name,
  * Handles the reverse name lookup. Not currently supported.
  */
 enum nss_status _nss_etcd_gethostbyaddr_r (const void *addr, socklen_t len,
-		int af, /* OUT */ struct hostent *result, char *buffer, size_t buflen,
-		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
+    int af, /* OUT */ struct hostent *result, char *buffer, size_t buflen,
+    /* OUT */ int *errnop, /* OUT */ int *h_errnop) {
   if (af != AF_INET) {
     *errnop = EAFNOSUPPORT;
     *h_errnop = NO_DATA;
