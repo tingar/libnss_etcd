@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <nss.h>
@@ -45,7 +46,7 @@ static void pack_hostent(/* OUT */ struct hostent *result, char *buffer,
 
   /* 3rd, address */
   r_addr = buffer + idx;
-  memcpy(r_addr, addr, result->h_length);
+	inet_pton(AF_INET, addr, r_addr);
   idx += ALIGN(result->h_length);
 
   /* 4th, the addresses ptr array */
@@ -67,6 +68,11 @@ enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
     /* OUT */ struct hostent *result, char *buffer, size_t buflen,
 		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
 
+	int pid, pipes[2], rv;  /* For hardcore forking action later. */
+	char addr[256];
+	int last_err;  /* Just in case we need to perror(3). */
+	char **args;
+
 	/* Only IPv4 addresses make sense for this resolver. */
   if (af != AF_INET) {
     *errnop = EAFNOSUPPORT;
@@ -74,18 +80,64 @@ enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
     return NSS_STATUS_UNAVAIL;
   }
 
-  debug("Query libnss-etcd: %s - %s", NSSRS_DEFAULT_FOLDER, (char *)name);
-	// TODO(kenno): write nssrs_resolve equivalent function.
-  struct hostent *hosts = nssrs_resolve(NSSRS_DEFAULT_FOLDER, (char *)name);
+	pipe(pipes);
+	if (0 == (pid = fork())) {
+		args = (char **) calloc(sizeof(char *), 4);
+		if (args < 0) goto CHILD_ERR;  /** Dijkstra can suck it. */
 
-	/* Host was not found in etcd. */
-  if (!hosts || hosts->h_name == NULL) {
-    *errnop = ENOENT;
-    *h_errnop = HOST_NOT_FOUND;
-    return NSS_STATUS_NOTFOUND;
-  }
+		args[0] = (char *) calloc(sizeof(char), 8);
+		strcpy(args[0], "etcdctl");
+		args[1] = (char *) calloc(sizeof(char), 4);
+		strcpy(args[1], "get");
+		args[2] = (char *) calloc(sizeof(char), strlen(name) + 7);
+		strcpy(args[2], "/hosts/");
+		strcpy(args[2] + 7, name);
+		args[3] = NULL;
 
-  pack_hostent(result, buffer, buflen, name, hosts->h_addr_list[0]);
+		/* Child code */
+		close(pipes[0]);
+		close(0);
+		close(2);
+		dup2(pipes[1], 1);
+		execvp("etcdctl", args);
+
+		CHILD_ERR:
+			last_err = errno;
+			perror("etcdctl");
+			exit(last_err);  /* Couldn't exec. */
+	} else if (pid > 0) {
+		/* Parent code */
+		close(pipes[1]);
+
+		if (0 > read(pipes[0], addr, 255)) {
+			last_err = errno;
+			perror("read");
+			*errnop = last_err;
+			*h_errnop = NO_DATA;
+			return NSS_STATUS_NOTFOUND;
+		} else {
+			int len = strlen(addr);
+			addr[len - 1] = '\0';
+		}
+
+		waitpid(pid, &rv, 0);
+
+		if (rv) {
+			/* Host wasn't found or etcdctl failed spectacularly. */
+			*errnop = ENOENT;
+			*h_errnop = HOST_NOT_FOUND;
+			return NSS_STATUS_NOTFOUND;
+		}
+	} else {
+		/* Error forking. */
+		last_err = errno;
+		perror("fork");
+		*errnop = last_err;
+		*h_errnop = NO_DATA;
+		return NSS_STATUS_UNAVAIL;
+	}
+
+  pack_hostent(result, buffer, buflen, name, addr);
 
   return NSS_STATUS_SUCCESS;
 }
@@ -98,7 +150,7 @@ enum nss_status _nss_etcd_gethostbyname2_r (const char *name, int af,
 enum nss_status _nss_etcd_gethostbyname_r (const char *name,
 		/* OUT */ struct hostent *result, char *buffer, size_t buflen,
 		/* OUT */ int *errnop, /* OUT */ int *h_errnop) {
-  return _nss_resolver_gethostbyname2_r(name, AF_INET, result, buffer, buflen,
+  return _nss_etcd_gethostbyname2_r(name, AF_INET, result, buffer, buflen,
     errnop, h_errnop);
 }
 
